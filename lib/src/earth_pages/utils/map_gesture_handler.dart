@@ -9,7 +9,6 @@ class MapGestureHandler {
   final MapboxMap mapboxMap;
   final MapAnnotationsManager annotationsManager;
   final BuildContext context;
-  final Function(PointAnnotation)? onStartDragging;  // Make it optional for now
 
   Timer? _longPressTimer;
   Timer? _placementDialogTimer;
@@ -17,12 +16,12 @@ class MapGestureHandler {
   bool _isOnExistingAnnotation = false;
   PointAnnotation? _selectedAnnotation;
   PointAnnotation? _lastPlacedAnnotation;
+  bool _isDragging = false;
 
   MapGestureHandler({
     required this.mapboxMap,
     required this.annotationsManager,
     required this.context,
-    this.onStartDragging,  // Make it optional
   });
 
   Future<void> handleLongPress(ScreenCoordinate screenPoint) async {
@@ -37,19 +36,16 @@ class MapGestureHandler {
       _longPressPoint = await mapboxMap.coordinateForPixel(screenPoint);
       _isOnExistingAnnotation = features.isNotEmpty;
       
-      logger.i('Is on existing annotation: $_isOnExistingAnnotation');
-
       if (!_isOnExistingAnnotation && _longPressPoint != null) {
+        // Handle new annotation creation
         logger.i('No annotation at tap location. Adding new annotation.');
         final newAnnotation = await annotationsManager.addAnnotation(_longPressPoint!);
-        logger.i('New annotation created at: ${newAnnotation.geometry.coordinates.lat}, ${newAnnotation.geometry.coordinates.lng}');
         _lastPlacedAnnotation = newAnnotation;
         _startPlacementDialogTimer();
       } else if (_isOnExistingAnnotation && _longPressPoint != null) {
         _selectedAnnotation = await annotationsManager.findNearestAnnotation(_longPressPoint!);
         if (_selectedAnnotation != null) {
-          logger.i('Found annotation - starting timer for drag mode');
-          _startLongPressTimer();
+          _startDragTimer();
         }
       }
     } catch (e) {
@@ -57,18 +53,33 @@ class MapGestureHandler {
     }
   }
 
-  void _startLongPressTimer() {
+  void _startDragTimer() {
     _longPressTimer?.cancel();
-    logger.i('Starting long press timer for dragging');
+    logger.i('Starting drag timer');
     
-    _longPressTimer = Timer(const Duration(seconds: 1), () async {
-      logger.i('Timer completed');
-      if (_selectedAnnotation != null && onStartDragging != null) {
-        logger.i('Starting drag mode');
-        onStartDragging!(_selectedAnnotation!);
-      }
-      _selectedAnnotation = null;
+    _longPressTimer = Timer(const Duration(seconds: 1), () {
+      logger.i('Drag timer completed - annotation can now be dragged');
+      _isDragging = true;
     });
+  }
+
+  Future<void> handleDrag(ScreenCoordinate screenPoint) async {
+    if (!_isDragging || _selectedAnnotation == null) return;
+
+    try {
+      final newPoint = await mapboxMap.coordinateForPixel(screenPoint);
+      await annotationsManager.updateVisualPosition(_selectedAnnotation!, newPoint);
+    } catch (e) {
+      logger.e('Error during drag: $e');
+    }
+  }
+
+  void endDrag() {
+    if (_isDragging && _selectedAnnotation != null) {
+      logger.i('Ending drag');
+      _isDragging = false;
+      _selectedAnnotation = null;
+    }
   }
 
   void _startPlacementDialogTimer() {
@@ -77,23 +88,13 @@ class MapGestureHandler {
     
     _placementDialogTimer = Timer(const Duration(milliseconds: 400), () async {
       try {
-        logger.i('Placement timer triggered');
         final currentAnnotation = _lastPlacedAnnotation;
-        
-        if (currentAnnotation == null) {
-          logger.w('No annotation found to confirm');
-          return;
-        }
+        if (currentAnnotation == null) return;
 
-        logger.i('Current annotation coordinates: ${currentAnnotation.geometry.coordinates.lat}, ${currentAnnotation.geometry.coordinates.lng}');
         final shouldKeepAnnotation = await MapDialogHandler.showNewAnnotationDialog(context);
-        logger.i('Dialog result - should keep annotation: $shouldKeepAnnotation');
-
+        
         if (!shouldKeepAnnotation) {
-          logger.i('User chose not to keep annotation - removing');
           await annotationsManager.removeAnnotation(currentAnnotation);
-        } else {
-          logger.i('Annotation will be kept');
         }
       } catch (e) {
         logger.e('Error in placement dialog timer: $e');
@@ -113,9 +114,13 @@ class MapGestureHandler {
     _selectedAnnotation = null;
     _lastPlacedAnnotation = null;
     _isOnExistingAnnotation = false;
+    _isDragging = false;
   }
 
   void dispose() {
     cancelTimer();
   }
+
+  bool get isDragging => _isDragging;
+  PointAnnotation? get selectedAnnotation => _selectedAnnotation;
 }

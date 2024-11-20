@@ -32,7 +32,20 @@ class MapAnnotationsManager {
       }
     } catch (e) {
       logger.e('Error during annotation removal: $e');
-      throw e; // Re-throw to handle in gesture handler
+      throw e;
+    }
+  }
+
+  Future<void> updateVisualPosition(PointAnnotation annotation, Point newPoint) async {
+    try {
+      // Update only the visual position by modifying the existing annotation
+      annotation.geometry = newPoint;
+      await _annotationManager.update(annotation);
+      
+      logger.i('Updated annotation visual position to: ${newPoint.coordinates.lat}, ${newPoint.coordinates.lng}');
+    } catch (e) {
+      logger.e('Error updating annotation visual position: $e');
+      throw e;
     }
   }
 
